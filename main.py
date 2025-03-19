@@ -1,7 +1,12 @@
-from agents import OpenAIAgent, AnthropicAgent, HuggingFaceAgent
+from agents import (
+    HuggingFaceProvider,
+    GeneralAgent, WeatherAgent, HotelAgent, RestaurantAgent, AttractionAgent
+)
 from core.base import Message
 from core.coordinator import Coordinator
 import os
+import re
+from datetime import datetime
 from dotenv import load_dotenv
 
 def main():
@@ -10,70 +15,47 @@ def main():
     # Create coordinator
     coordinator = Coordinator()
     
-    # Check available API keys
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    openai_key = os.getenv("OPENAI_API_KEY")
+    # Check available API key
     huggingface_key = os.getenv("HUGGINGFACE_API_KEY")
     
-    use_openai = openai_key and openai_key != "your_api_key_here"
-    use_anthropic = anthropic_key and anthropic_key != "your_anthropic_api_key_here"
-    use_huggingface = True  # Can be used without API key (with rate limits)
-    
-    # Print available APIs
+    # Print available API
     print("Available APIs:")
-    print(f"- OpenAI: {'✓' if use_openai else '✗'}")
-    print(f"- Anthropic: {'✓' if use_anthropic else '✗'}")
     print(f"- Hugging Face: {'✓ (API key provided)' if huggingface_key else '✓ (free tier)'}")
     
-    # Choose general assistant agent based on available APIs
-    if use_openai:
-        print("Using OpenAI for general assistant...")
-        general_assistant = OpenAIAgent("Assistant")
-    elif use_anthropic:
-        print("Using Anthropic for general assistant...")
-        general_assistant = AnthropicAgent("Assistant")
-    else:
-        print("Using Hugging Face for general assistant...")
-        general_assistant = HuggingFaceAgent("Assistant")
+    # Create LLM provider
+    primary_provider = HuggingFaceProvider("HuggingFaceH4/zephyr-7b-beta")
+    print("Using HuggingFace as primary provider")
     
-    # Set specialization for general assistant
-    general_assistant.set_specialization("""You are a helpful general assistant. Answer questions on any topic except for 
-    weather-related queries, which will be handled by a specialized agent. If a user asks about weather, 
-    kindly inform them that a specialized weather agent can better assist with that question.""")
+    # Initialize provider for possible use
+    providers = {
+        "huggingface": HuggingFaceProvider("HuggingFaceH4/zephyr-7b-beta")
+    }
     
-    # Choose weather assistant based on available APIs
-    if use_anthropic:
-        print("Using Anthropic for weather expert...")
-        weather_assistant = AnthropicAgent("WeatherExpert")
-    elif use_openai:
-        print("Using OpenAI for weather expert...")
-        weather_assistant = OpenAIAgent("WeatherExpert")
-    else:
-        print("Using Hugging Face for weather expert...")
-        # Use a different model for the weather agent
-        weather_assistant = HuggingFaceAgent("WeatherExpert", model_id="HuggingFaceH4/zephyr-7b-beta")
-    
-    # Set specialization for weather assistant
-    weather_assistant.set_specialization("""You are a weather specialist. When asked about weather in a location, provide detailed 
-    information about temperature, conditions, humidity, and forecasts. If you don't have real-time 
-    weather data, explain that you're providing general climate information about the region based on historical patterns.
-    
-    Always try to identify the location in the user's query, even if it's not explicitly stated.
-    If the location is ambiguous, ask for clarification. If no location is mentioned, ask which 
-    city they're interested in.""")
+    # Create specialized agents using the primary provider
+    general_assistant = GeneralAgent("Assistant", primary_provider)
+    weather_assistant = WeatherAgent("WeatherExpert", primary_provider)
+    hotel_assistant = HotelAgent("HotelExpert", primary_provider)
+    restaurant_assistant = RestaurantAgent("RestaurantExpert", primary_provider)
+    attraction_assistant = AttractionAgent("AttractionExpert", primary_provider)
     
     # Initialize agents
     general_assistant.initialize()
     weather_assistant.initialize()
+    hotel_assistant.initialize()
+    restaurant_assistant.initialize()
+    attraction_assistant.initialize()
     
     # Add agents to coordinator
     coordinator.add_agent(general_assistant)
     coordinator.add_agent(weather_assistant)
+    coordinator.add_agent(hotel_assistant)
+    coordinator.add_agent(restaurant_assistant)
+    coordinator.add_agent(attraction_assistant)
     
-    print("\nMulti-Agent Chatbot System (Type 'exit' to quit)")
-    print("Available agents: Assistant, WeatherExpert")
+    print("\nMulti-Agent Travel Assistant System (Type 'exit' to quit)")
+    print("Available agents: Assistant, WeatherExpert, HotelExpert, RestaurantExpert, AttractionExpert")
     print("You can switch agents by typing '@AgentName your message'")
-    print("Weather-related queries will automatically be routed to the WeatherExpert")
+    print("For a comprehensive travel guide, simply say: 'I want to go to [location] on [date]'")
     print("-" * 50)
     
     current_agent = "Assistant"  # Default agent
@@ -109,23 +91,106 @@ def main():
             sender="User"
         )
         
-        # Determine which agent to use based on content
-        target_agent = current_agent
-        weather_keywords = ["weather", "temperature", "forecast", "rain", "sunny", "climate", "humid", "cold", "hot"]
+        # Check for travel intent pattern: "I want to go to/in [location] on [date]"
+        travel_pattern = re.compile(r"(?:i want to|planning to|going to|travel to|visit) (?:go to|go in|visit) ([a-zA-Z\s]+) (?:on|at|in) ([a-zA-Z0-9\s,]+)", re.IGNORECASE)
+        match = travel_pattern.search(user_input)
         
-        if current_agent != "WeatherExpert" and any(keyword in user_input.lower() for keyword in weather_keywords):
-            target_agent = "WeatherExpert"
-            print(f"Routing to {target_agent} based on query content...")
-        
-        # Process message with appropriate agent
-        try:
-            print(f"Processing message with {target_agent}...")
-            response = coordinator.process_message(user_message, target_agent)
-            print(f"{response.sender}: {response.content}")
-        except Exception as e:
-            import traceback
-            print(f"Error: {str(e)}")
-            print(traceback.format_exc())
+        if match:
+            # Extract location and date
+            location = match.group(1).strip()
+            date_str = match.group(2).strip()
+            
+            print(f"Detected travel intent for {location} on {date_str}")
+            print("Building comprehensive travel guide...")
+            
+            # Collect information from all specialized agents
+            try:
+                # 1. Get weather information
+                weather_query = f"What will the weather be like in {location} on {date_str}?"
+                weather_message = Message(content=weather_query, sender="User")
+                weather_response = coordinator.process_message(weather_message, "WeatherExpert")
+                
+                # 2. Get hotel information
+                hotel_query = f"What are the 5 best hotels in {location}?"
+                hotel_message = Message(content=hotel_query, sender="User")
+                hotel_response = coordinator.process_message(hotel_message, "HotelExpert")
+                
+                # 3. Get restaurant information
+                restaurant_query = f"What are the 5 best restaurants in {location}?"
+                restaurant_message = Message(content=restaurant_query, sender="User")
+                restaurant_response = coordinator.process_message(restaurant_message, "RestaurantExpert")
+                
+                # 4. Get attraction information
+                attraction_query = f"What are the 5 best attractions in {location}?"
+                attraction_message = Message(content=attraction_query, sender="User")
+                attraction_response = coordinator.process_message(attraction_message, "AttractionExpert")
+                
+                # 5. Compile comprehensive guide
+                guide_prompt = f"""Create a comprehensive travel guide for {location} on {date_str} using the following information:
+                
+                WEATHER:
+                {weather_response.content}
+                
+                HOTELS:
+                {hotel_response.content}
+                
+                RESTAURANTS:
+                {restaurant_response.content}
+                
+                ATTRACTIONS:
+                {attraction_response.content}
+                
+                Format the guide in a clear, organized way with sections for weather, accommodation, dining, and sightseeing.
+                Add a brief introduction and conclusion.
+                """
+                
+                guide_message = Message(content=guide_prompt, sender="User")
+                final_response = coordinator.process_message(guide_message, "Assistant")
+                
+                print(f"{final_response.sender}: {final_response.content}")
+            
+            except Exception as e:
+                import traceback
+                print(f"Error building travel guide: {str(e)}")
+                print(traceback.format_exc())
+                
+                # Fall back to general assistant
+                try:
+                    print(f"Processing message with {current_agent} instead...")
+                    response = coordinator.process_message(user_message, current_agent)
+                    print(f"{response.sender}: {response.content}")
+                except Exception as e:
+                    print(f"Error: {str(e)}")
+        else:
+            # Determine which agent to use based on content
+            target_agent = current_agent
+            weather_keywords = ["weather", "temperature", "forecast", "rain", "sunny", "climate", "humid", "cold", "hot"]
+            hotel_keywords = ["hotel", "motel", "accommodation", "stay", "room", "suite", "lodge", "resort"]
+            restaurant_keywords = ["restaurant", "food", "eat", "dining", "cuisine", "meal", "breakfast", "lunch", "dinner"]
+            attraction_keywords = ["attraction", "visit", "sightseeing", "tour", "museum", "landmark", "monument", "park", "gallery"]
+            
+            if current_agent == "Assistant":
+                if any(keyword in user_input.lower() for keyword in weather_keywords):
+                    target_agent = "WeatherExpert"
+                elif any(keyword in user_input.lower() for keyword in hotel_keywords):
+                    target_agent = "HotelExpert"
+                elif any(keyword in user_input.lower() for keyword in restaurant_keywords):
+                    target_agent = "RestaurantExpert"
+                elif any(keyword in user_input.lower() for keyword in attraction_keywords):
+                    target_agent = "AttractionExpert"
+                
+                if target_agent != "Assistant":
+                    print(f"Routing to {target_agent} based on query content...")
+            
+            # Process message with appropriate agent
+            try:
+                print(f"Processing message with {target_agent}...")
+                response = coordinator.process_message(user_message, target_agent)
+                print(f"{response.sender}: {response.content}")
+            except Exception as e:
+                import traceback
+                print(f"Error: {str(e)}")
+                print(traceback.format_exc())
         
         print("-" * 50)
 
