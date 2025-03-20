@@ -152,6 +152,9 @@ def create_app():
                 # Log the final response
                 logger.info(f"Final Response: {final_response.content}")
                 
+                # Clean the response by removing system prompt text
+                cleaned_response = clean_response(final_response.content)
+                
                 # Save the travel guide to a JSON file for history
                 history_entry = {
                     "timestamp": datetime.now().isoformat(),
@@ -162,7 +165,7 @@ def create_app():
                     "hotel_response": hotel_response.content,
                     "restaurant_response": restaurant_response.content,
                     "attraction_response": attraction_response.content,
-                    "final_response": final_response.content
+                    "final_response": cleaned_response
                 }
                 
                 # Create history directory if it doesn't exist
@@ -174,14 +177,17 @@ def create_app():
                     json.dump(history_entry, f, indent=2)
                 
                 # Return only the final response to the UI
-                return jsonify({'response': final_response.content})
+                return jsonify({'response': cleaned_response})
             else:
                 # For non-travel queries, just use the general assistant
                 logger.info(f"Processing with Assistant...")
                 response = coordinator.process_message(user_message, "Assistant")
                 logger.info(f"Assistant Response: {response.content}")
                 
-                return jsonify({'response': response.content})
+                # Clean the response
+                cleaned_response = clean_response(response.content)
+                
+                return jsonify({'response': cleaned_response})
         except Exception as e:
             import traceback
             error_msg = str(e)
@@ -190,5 +196,20 @@ def create_app():
             logger.error(error_traceback)
             
             return jsonify({'response': f"I'm sorry, but I encountered an error processing your request. Please try again or rephrase your query."})
+
+    # Helper function to clean responses
+    def clean_response(response_text):
+        """Remove system prompts and instructions from the response"""
+        # Remove the system prompt
+        if "System: You are Assistant, a helpful AI assistant." in response_text:
+            response_text = response_text.split("System: You are Assistant, a helpful AI assistant.", 1)[1].strip()
+        
+        # Remove the detailed assistant instructions if present
+        if "You are a helpful general assistant and travel coordinator." in response_text:
+            parts = response_text.split("User:", 1)
+            if len(parts) > 1:
+                response_text = parts[1].strip()
+        
+        return response_text
 
     return app 
